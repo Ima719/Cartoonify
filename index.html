@@ -28,6 +28,7 @@
     }
     button:hover { background: #45a049; }
     .container { display: flex; flex-wrap: wrap; justify-content: center; }
+    #status { color: #e74c3c; margin: 10px; }
   </style>
 </head>
 <body>
@@ -35,6 +36,8 @@
   <p>اختر صورة من جهازك — سيتم تحويلها تلقائيًّا إلى نمط كرتوني!</p>
   
   <input type="file" id="imageLoader" accept="image/*" />
+  <div id="status">جارٍ تحميل أدوات المعالجة... يرجى الانتظار.</div>
+  
   <div class="container">
     <div>
       <h3>الصورة الأصلية</h3>
@@ -45,24 +48,31 @@
       <canvas id="cartoonCanvas"></canvas>
     </div>
   </div>
-  <button onclick="downloadCartoon()">⬇️ تحميل الصورة الكرتونية</button>
+  <button onclick="downloadCartoon()" id="downloadBtn" disabled>⬇️ تحميل الصورة الكرتونية</button>
 
-  <!-- تحميل OpenCV.js -->
-  <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCVReady()" onerror="onOpenCVError()"></script>
+  <!-- تحميل OpenCV.js من CDN موثوق -->
+  <script src="https://cdn.jsdelivr.net/npm/opencv-js@4.5.0/opencv.min.js"></script>
 
   <script>
     let imgElement = new Image();
     let imgLoaded = false;
+    let opencvReady = false;
 
-    function onOpenCVReady() {
-      console.log("OpenCV.js جاهز!");
-    }
-
-    function onOpenCVError() {
-      alert("عذرًا، فشل تحميل أدوات المعالجة. حاول مرة أخرى.");
-    }
+    // تفعيل الأداة بعد تحميل OpenCV
+    window.addEventListener('load', () => {
+      if (typeof cv !== 'undefined') {
+        opencvReady = true;
+        document.getElementById('status').innerText = '✅ جاهز! اختر صورة للتحويل.';
+      } else {
+        document.getElementById('status').innerText = '❌ فشل تحميل أدوات المعالجة.';
+      }
+    });
 
     imgElement.onload = function() {
+      if (!opencvReady) {
+        alert("الأداة لم تُحمّل بعد. انتظر قليلاً ثم حاول مجددًا.");
+        return;
+      }
       imgLoaded = true;
       drawOriginal();
       cartoonify();
@@ -81,48 +91,49 @@
     function drawOriginal() {
       const canvas = document.getElementById('originalCanvas');
       const ctx = canvas.getContext('2d');
-      canvas.width = imgElement.width;
-      canvas.height = imgElement.height;
-      ctx.drawImage(imgElement, 0, 0);
+      // تحديد حجم معقول لتجنب التحميل الزائد
+      const maxWidth = 600;
+      const scale = maxWidth / imgElement.width;
+      const width = maxWidth;
+      const height = imgElement.height * scale;
+      
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(imgElement, 0, 0, width, height);
     }
 
     function cartoonify() {
-      if (!imgLoaded || typeof cv === 'undefined') return;
-
       try {
         let src = cv.imread(document.getElementById('originalCanvas'));
         let dst = new cv.Mat();
-        let dst2 = new cv.Mat();
+        let gray = new cv.Mat();
         let edges = new cv.Mat();
 
-        // 1. تنعيم الصورة
+        // تنعيم
         cv.bilateralFilter(src, dst, 9, 75, 75);
-
-        // 2. اكتشاف الحواف
-        cv.cvtColor(dst, dst2, cv.COLOR_RGBA2GRAY);
-        cv.medianBlur(dst2, dst2, 7);
-        cv.adaptiveThreshold(dst2, edges, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 9, 2);
-
-        // 3. دمج الحواف مع الصورة الملونة
+        // حواف
+        cv.cvtColor(dst, gray, cv.COLOR_RGBA2GRAY);
+        cv.adaptiveThreshold(gray, edges, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 9, 2);
+        // دمج
         cv.cvtColor(edges, edges, cv.COLOR_GRAY2RGBA);
-        cv.bitwise_and(dst, edges, dst2);
+        cv.bitwise_and(dst, edges, dst);
 
-        cv.imshow('cartoonCanvas', dst2);
+        cv.imshow('cartoonCanvas', dst);
 
-        // تنظيف الذاكرة
-        src.delete(); dst.delete(); dst2.delete(); edges.delete();
+        // تمكين زر التحميل
+        document.getElementById('downloadBtn').disabled = false;
+
+        // تنظيف
+        src.delete(); dst.delete(); gray.delete(); edges.delete();
       } catch (e) {
-        console.error("خطأ في المعالجة:", e);
-        alert("حدث خطأ أثناء التحويل. جرب صورة أخرى.");
+        document.getElementById('status').innerText = '❌ خطأ في التحويل: ' + e.message;
+        console.error(e);
       }
     }
 
     function downloadCartoon() {
       const canvas = document.getElementById('cartoonCanvas');
-      if (canvas.width === 0) {
-        alert("لم يتم تحويل أي صورة بعد!");
-        return;
-      }
+      if (canvas.width === 0) return;
       const link = document.createElement('a');
       link.download = 'cartoon-image.png';
       link.href = canvas.toDataURL();
